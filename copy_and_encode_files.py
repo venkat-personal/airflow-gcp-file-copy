@@ -16,21 +16,41 @@ default_args = {
     'retry_delay': timedelta(minutes=5),
 }
 
+# Function to download files from GCS
+def download_blob(bucket_name, source_blob_name, destination_file_name):
+    client = storage.Client()
+    bucket = client.bucket(bucket_name)
+    blob = bucket.blob(source_blob_name)
+    blob.download_to_filename(destination_file_name)
+    return destination_file_name
+
 # Function to decrypt and then PGP encrypt files
-def pgp_decrypt_and_encrypt_files(source_bucket_name, destination_bucket_name, pgp_private_key_path, pgp_passphrase, pgp_public_key_path, prefix=''):
+def pgp_decrypt_and_encrypt_files(source_bucket_name, destination_bucket_name, pgp_private_key_gcs_path, pgp_passphrase, pgp_public_key_gcs_path, prefix=''):
     client = storage.Client()
     
     source_bucket = client.bucket(source_bucket_name)
     destination_bucket = client.bucket(destination_bucket_name)
     
+    # Define local paths to temporarily store downloaded keys
+    local_private_key_path = '/tmp/private_key.asc'
+    local_public_key_path = '/tmp/public_key.asc'
+    
+    # Download the PGP private key from GCS
+    private_key_bucket, private_key_blob = pgp_private_key_gcs_path.split('/', 1)
+    download_blob(private_key_bucket, private_key_blob, local_private_key_path)
+    
+    # Download the PGP public key from GCS
+    public_key_bucket, public_key_blob = pgp_public_key_gcs_path.split('/', 1)
+    download_blob(public_key_bucket, public_key_blob, local_public_key_path)
+    
     # Load the PGP private key
-    with open(pgp_private_key_path, 'r') as key_file:
+    with open(local_private_key_path, 'r') as key_file:
         private_key = PGPKey.from_blob(key_file.read())[0]
     
     # Unlock the private key with the passphrase
     with private_key.unlock(pgp_passphrase):
         # Load the PGP public key
-        with open(pgp_public_key_path, 'r') as pub_key_file:
+        with open(local_public_key_path, 'r') as pub_key_file:
             public_key = PGPKey.from_blob(pub_key_file.read())[0]
         
         # List blobs in the source bucket with the given prefix
@@ -70,9 +90,9 @@ with DAG(
         op_kwargs={
             'source_bucket_name': os.getenv('SOURCE_BUCKET_NAME'),  # Retrieve from Airflow environment variables
             'destination_bucket_name': os.getenv('DESTINATION_BUCKET_NAME'),  # Retrieve from Airflow environment variables
-            'pgp_private_key_path': os.getenv('PGP_PRIVATE_KEY_PATH'),  # Retrieve from Airflow environment variables
+            'pgp_private_key_gcs_path': os.getenv('PGP_PRIVATE_KEY_GCS_PATH'),  # GCS path to the private key
             'pgp_passphrase': os.getenv('PGP_PASSPHRASE'),  # Retrieve from Airflow environment variables
-            'pgp_public_key_path': os.getenv('PGP_PUBLIC_KEY_PATH'),  # Retrieve from Airflow environment variables
+            'pgp_public_key_gcs_path': os.getenv('PGP_PUBLIC_KEY_GCS_PATH'),  # GCS path to the public key
             'prefix': os.getenv('PREFIX', ''),  # Optional prefix, default to an empty string
         },
     )
