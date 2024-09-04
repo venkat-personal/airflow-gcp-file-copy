@@ -25,7 +25,7 @@ def download_blob(bucket_name, source_blob_name, destination_file_name):
     return destination_file_name
 
 # Function to decrypt and then PGP encrypt files
-def pgp_decrypt_and_encrypt_files(source_bucket_name, destination_bucket_name, pgp_private_key_gcs_path, pgp_passphrase, pgp_public_key_gcs_path, prefix=''):
+def pgp_decrypt_and_encrypt_files(source_bucket_name, destination_bucket_name, pgp_private_key_gcs_path, pgp_passphrase, pgp_public_key_gcs_path, prefixes=[]):
     client = storage.Client()
     
     source_bucket = client.bucket(source_bucket_name)
@@ -53,24 +53,25 @@ def pgp_decrypt_and_encrypt_files(source_bucket_name, destination_bucket_name, p
         with open(local_public_key_path, 'r') as pub_key_file:
             public_key = PGPKey.from_blob(pub_key_file.read())[0]
         
-        # List blobs in the source bucket with the given prefix
-        blobs = source_bucket.list_blobs(prefix=prefix)
-        
-        for blob in blobs:
-            # Step 1: Read the content of the source file
-            encrypted_content = blob.download_as_string()
+        for prefix in prefixes:
+            # List blobs in the source bucket with the given prefix
+            blobs = source_bucket.list_blobs(prefix=prefix)
             
-            # Step 2: Decrypt the content using the PGP private key
-            message = PGPMessage.from_blob(encrypted_content)
-            decrypted_content = private_key.decrypt(message).message
-            
-            # Step 3: Encrypt the decrypted content using the PGP public key
-            new_message = PGPMessage.new(decrypted_content)
-            encrypted_message = public_key.encrypt(new_message)
-            
-            # Step 4: Store the PGP encrypted content into the destination bucket
-            destination_blob = destination_bucket.blob(blob.name)
-            destination_blob.upload_from_string(str(encrypted_message))
+            for blob in blobs:
+                # Step 1: Read the content of the source file
+                encrypted_content = blob.download_as_string()
+                
+                # Step 2: Decrypt the content using the PGP private key
+                message = PGPMessage.from_blob(encrypted_content)
+                decrypted_content = private_key.decrypt(message).message
+                
+                # Step 3: Encrypt the decrypted content using the PGP public key
+                new_message = PGPMessage.new(decrypted_content)
+                encrypted_message = public_key.encrypt(new_message)
+                
+                # Step 4: Store the PGP encrypted content into the destination bucket
+                destination_blob = destination_bucket.blob(blob.name)
+                destination_blob.upload_from_string(str(encrypted_message))
 
 # Define the DAG
 with DAG(
@@ -93,7 +94,7 @@ with DAG(
             'pgp_private_key_gcs_path': os.getenv('PGP_PRIVATE_KEY_GCS_PATH'),  # GCS path to the private key
             'pgp_passphrase': os.getenv('PGP_PASSPHRASE'),  # Retrieve from Airflow environment variables
             'pgp_public_key_gcs_path': os.getenv('PGP_PUBLIC_KEY_GCS_PATH'),  # GCS path to the public key
-            'prefix': os.getenv('PREFIX', ''),  # Optional prefix, default to an empty string
+            'prefixes': os.getenv('PREFIXES', '').split(','),  # A list of prefixes, split by commas
         },
     )
 
